@@ -16,16 +16,16 @@
   },
   "cache": {
     "weather": {
-      "cached_at": "2026-11-17T17:08:19.433492+00:00",
+      "cached_at": "2026-11-17T17:17:37.211444+00:00",
       "data": {
-        "location": "Home",
+        "location": "Milano",
         "latitude": 45.4642,
         "longitude": 9.19,
         "current": {
           "temperature": 8.0,
-          "apparent_temperature": 6.3,
+          "apparent_temperature": 6.2,
           "humidity": 92,
-          "wind_speed": 6.1,
+          "wind_speed": 6.5,
           "weather_code": 3,
           "description": "Overcast",
           "icon": "cloud"
@@ -52,6 +52,17 @@
           "sunrise": "2026-11-18T07:26",
           "sunset": "2026-11-18T16:50"
         }
+      }
+    },
+    "commute": {
+      "cached_at": "2026-11-17T17:17:39.168661+00:00",
+      "data": {
+        "provider": "osrm",
+        "duration_minutes": 9,
+        "duration_text": "9 min",
+        "distance_km": 4.1,
+        "origin": "Via Example 1, 20100 Milano MI, Italy",
+        "destination": "Piazza Example 10, 20100 Milano MI, Italy"
       }
     }
   },

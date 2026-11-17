@@ -6,6 +6,7 @@ pytz
 # Networking & Feeds
 requests
 feedparser
+beautifulsoup4
 
 # Image Rendering (3-Color E-Paper)
 Pillow

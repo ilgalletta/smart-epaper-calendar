@@ -2,63 +2,70 @@
 # Copy this file to `config.yaml` and fill in your personal values.
 # Never commit `config.yaml` to version control.
 
-general:
-  timezone: "Europe/Rome"
-  language: "it"
-  display:
-    width: 800
-    height: 480
-    colors: 3 # Black, White, Red (Waveshare 7.5" HAT (B))
-    mock_output_path: "./output/preview.png"
+timezone: "Europe/Rome"
+language: "it"
 
-calendar:
-  # Public or private secret iCal (.ics) URLs
-  ical_urls:
-    - name: "Family"
-      url: "https://calendar.google.com/calendar/ical/family10116765158045700908%40group.calendar.google.com/public/basic.ics"
-      highlight: true
+display:
+  width: 800
+  height: 480
+  colors: 3  # Black, White, Red (Waveshare 7.5" HAT (B))
+  mock_output_path: "data/preview.png"
 
+# Public or private secret iCal (.ics) URLs
+calendars:
+  - name: "Family"
+    url: "https://calendar.google.com/calendar/ical/family10116765158045700908%40group.calendar.google.com/public/basic.ics"
+    highlight: true
+
+# RSS feed for headlines widget
 news:
-  # RSS feeds for headlines ticker / digest
-  rss_feeds:
-    - name: "Il Post"
-      url: "https://www.ilpost.it/feed/"
-      max_items: 3
+  feed_url: "https://www.ilpost.it/feed/"
+  max_items: 3
 
+# Open-Meteo coordinates (no API key required)
 weather:
-  # Open-Meteo coordinates (no API key required)
-  location_name: "Home"
+  location_name: "Milano"
   latitude: 45.4642
   longitude: 9.1900
 
+# Home & Office addresses / coordinates for morning commute time
 commute:
-  # Home & Office coordinates or street addresses for travel-time / traffic checks
-  home:
-    label: "Home"
-    address: "Via Example 1, 20100 Milano MI, Italy"
-    latitude: 45.4642
-    longitude: 9.1900
-  office:
-    label: "Office"
-    address: "Piazza Example 10, 20100 Milano MI, Italy"
-    latitude: 45.4773
-    longitude: 9.1815
+  home_address: "Via Example 1, 20100 Milano MI, Italy"
+  office_address: "Piazza Example 10, 20100 Milano MI, Italy"
+  home_coords: [45.4642, 9.1900]
+  office_coords: [45.4773, 9.1815]
+  osrm_url: "https://router.project-osrm.org"
+  google_maps_api_key: ""
+  nominatim_user_agent: "smart-epaper-calendar/1.0"
 
+# Milano Ristorazione (live school lunch menu)
+milanoristorazione:
+  enabled: true
+  school_name: 'Scuola Primaria "Pietro Micca" - I.C. Statale Gattamelata'
+  school_query: "Gattamelata"
+  area: "C.C. Colleoni - Area 1"
+  menu_url: "https://www.milanoristorazione.it/il-menu-del-giorno"
+  api_url: ""
+  cache_ttl_seconds: 21600
+
+# Telegram bot token from @BotFather (for grocery list updates)
 telegram:
-  # Bot token from @BotFather (used for quick notes, reminders, or wake-up commands)
-  bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  bot_token: ""
   allowed_chat_ids: []
+  poll_timeout: 30
 
+# Local LAN FastAPI configuration portal
 web_ui:
-  # Local LAN FastAPI configuration portal
   host: "0.0.0.0"
   port: 8080
-  # Generate a password hash and random secret before exposing on your LAN
-  password_hash: "CHANGE_ME_PASSWORD_HASH"
-  session_secret: "CHANGE_ME_RANDOM_SESSION_SECRET"
+  password: "changeme"
+  session_secret: ""
+  session_max_age_seconds: 604800
+  preview_image_path: "data/preview.png"
+  refresh_command: ""
 
+# Time-of-day windows control what information is prioritized on each refresh
 schedule:
-  # Time-of-day windows control what information is prioritized on each refresh
   time_windows:
     morning:
       start: "06:30"
@@ -77,29 +84,10 @@ power:
   # "battery_wakeup" (Witty Pi 4 Mini scheduled wake + shutdown) or "always_on" (USB power)
   mode: "battery_wakeup"
   wake_duration_seconds: 120
-  # Keep Web UI alive longer when maintenance mode is toggled via Web UI or button
   maintenance_timeout_minutes: 15
 
-weekly_activities:
-  # Fixed recurring weekly family/kid activities
-  monday:
-    - time: "17:00"
-      title: "Swimming"
-  tuesday:
-    - time: "16:30"
-      title: "Music Lesson"
-  wednesday: []
-  thursday:
-    - time: "17:00"
-      title: "Soccer"
-  friday: []
-  saturday:
-    - time: "10:00"
-      title: "Library"
-  sunday: []
-
+# Offline/fallback school meal menu (used if milanoristorazione.it is unreachable)
 school_menu:
-  # Optional rotating or weekly school meal menu
   week_1:
     monday: "Pasta al pomodoro, Petto di pollo, Carote"
     tuesday: "Risotto allo zafferano, Filetto di platessa, Insalata"

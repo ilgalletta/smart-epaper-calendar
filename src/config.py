@@ -71,7 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "password": "changeme",
         "session_secret": "",
         "session_max_age_seconds": 60 * 60 * 24 * 7,
-        "preview_image_path": "data/latest_render.png",
+        "preview_image_path": "data/preview.png",
         "refresh_command": "",
     },
 }

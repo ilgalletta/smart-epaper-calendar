@@ -33,6 +33,7 @@ from src.display.waveshare_7in5_b import EPD_HEIGHT, EPD_WIDTH, Waveshare7in5B
 from src.fetchers.calendar_ics import fetch_calendar_events
 from src.fetchers.commute import fetch_commute
 from src.fetchers.news_ilpost import fetch_ilpost_news
+from src.fetchers.school_menu_milano import resolve_school_menu
 from src.fetchers.weather import fetch_weather
 from src.renderer.epaper_ui import render_dashboard
 from src.telegram_bot import GroceryTelegramBot
@@ -129,35 +130,23 @@ def _adapt_school_meals(
     state_meals: dict[str, Any],
     cfg: dict[str, Any],
     now: datetime,
+    state_manager: Optional[StateManager] = None,
 ) -> dict[str, Any]:
-    """Build ``mensa`` payload from state.json or config.yaml ``school_menu``."""
-    today_text = str(state_meals.get("today", "") or "").strip()
-    tomorrow_text = str(state_meals.get("tomorrow", "") or "").strip()
-
-    if not today_text and not tomorrow_text:
-        menu_cfg = cfg.get("school_menu", {})
-        if isinstance(menu_cfg, dict):
-            week_1 = menu_cfg.get("week_1", menu_cfg)
-            if isinstance(week_1, dict):
-                today_key = now.strftime("%A").lower()
-                tomorrow_key = (now + timedelta(days=1)).strftime("%A").lower()
-                today_text = str(week_1.get(today_key, "") or "").strip()
-                tomorrow_text = str(week_1.get(tomorrow_key, "") or "").strip()
-
-    return {
-        "today": today_text,
-        "tomorrow": tomorrow_text,
-    }
+    """Build ``mensa`` payload via ``resolve_school_menu`` (state, milanoristorazione.it, config.yaml)."""
+    return resolve_school_menu(state_meals, cfg, now, state_manager=state_manager)
 
 
 def _adapt_weather(raw_weather: dict[str, Any]) -> dict[str, Any]:
     current = raw_weather.get("current", {}) if isinstance(raw_weather.get("current"), dict) else {}
     today = raw_weather.get("today", {}) if isinstance(raw_weather.get("today"), dict) else {}
+    temp = current.get("temperature")
+    tmin = today.get("temp_min")
+    tmax = today.get("temp_max")
     return {
         "city": str(raw_weather.get("location") or "Home"),
-        "temp": current.get("temperature"),
-        "temp_min": today.get("temp_min"),
-        "temp_max": today.get("temp_max"),
+        "temp": temp if temp is not None else "--",
+        "temp_min": tmin if tmin is not None else "--",
+        "temp_max": tmax if tmax is not None else "--",
         "condition": str(current.get("description") or "N/D"),
         "icon": str(current.get("icon") or "cloud"),
     }
@@ -238,13 +227,24 @@ def build_dashboard_payload(
         logger.warning("Commute fetch failed: %s", exc)
         commute_raw = {}
 
-    # 6. Read updated state
+    # 6. Read updated state & resolve school menu (state -> milanoristorazione.it -> config)
     state = sm.load()
+    try:
+        mensa_payload = resolve_school_menu(
+            state.get("school_meals", {}),
+            cfg,
+            now,
+            state_manager=sm,
+        )
+    except Exception as exc:
+        logger.warning("School menu resolution failed: %s", exc)
+        mensa_payload = {"today": "", "tomorrow": ""}
+
     return {
         "last_sync": now.strftime("%H:%M"),
         "calendar_days": _adapt_calendar_days(calendar_grouped, now),
         "fixed_activities": _adapt_fixed_activities(state.get("fixed_activities")),
-        "mensa": _adapt_school_meals(state.get("school_meals", {}), cfg, now),
+        "mensa": mensa_payload,
         "weather": _adapt_weather(weather_raw),
         "commute": _adapt_commute(commute_raw),
         "news": [str(item.get("title", "")) for item in news_items if item.get("title")],
