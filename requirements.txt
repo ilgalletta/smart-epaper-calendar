@@ -21,3 +21,8 @@ pyyaml
 
 # Telegram Integration
 python-telegram-bot
+
+# School Menu PDF & OCR Fallback
+pypdf
+pypdfium2
+pytesseract

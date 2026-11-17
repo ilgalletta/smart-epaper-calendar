@@ -96,6 +96,8 @@ BASE_PKGS=(
   libopenjp2-7
   fonts-dejavu-core
   fonts-liberation
+  tesseract-ocr
+  tesseract-ocr-ita
 )
 
 apt-get install -y --no-install-recommends "${BASE_PKGS[@]}"

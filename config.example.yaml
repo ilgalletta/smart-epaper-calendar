@@ -46,6 +46,8 @@ milanoristorazione:
   area: "C.C. Colleoni - Area 1"
   menu_url: "https://www.milanoristorazione.it/il-menu-del-giorno"
   api_url: ""
+  pdf_url: ""
+  pdf_path: "data/menu_scuola.pdf"
   cache_ttl_seconds: 21600
 
 # Telegram bot token from @BotFather (for grocery list updates)

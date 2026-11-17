@@ -2,8 +2,8 @@
 
 Fetches the daily/weekly school lunch menu from milanoristorazione.it (HTML or
 optional JSON API endpoint), caches parsed results in StateManager (data/state.json),
-and falls back gracefully to cached data, state.json manual overrides, or
-config.yaml ``school_menu`` when offline.
+and falls back gracefully to cached data, PDF download/local file (text extraction
++ pytesseract OCR), state.json manual overrides, or config.yaml ``school_menu``.
 """
 
 from __future__ import annotations
@@ -11,13 +11,15 @@ from __future__ import annotations
 import logging
 import re
 from datetime import date, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
 
-from src.config import StateManager, load_config
+from src.config import PROJECT_ROOT, StateManager, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ DEFAULT_SCHOOL_QUERY = "Gattamelata"
 DEFAULT_AREA = "C.C. Colleoni - Area 1"
 DEFAULT_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 CACHE_KEY = "school_menu_milano"
+PDF_CACHE_KEY = "school_menu_pdf"
 
 ITALIAN_WEEKDAYS: dict[int, str] = {
     0: "lunedì",
@@ -132,6 +135,7 @@ def _extract_courses_from_lines(lines: list[str]) -> dict[str, str]:
     """Extract primo/secondo/contorno/frutta from labeled or ordered text lines."""
     courses = {"primo": "", "secondo": "", "contorno": "", "frutta": ""}
     unlabeled: list[str] = []
+    pending_key: str | None = None
 
     for raw_line in lines:
         line = _clean_text(raw_line)
@@ -149,12 +153,27 @@ def _extract_courses_from_lines(lines: list[str]) -> dict[str, str]:
                     val = _clean_text(m.group(1))
                     if val and not courses[key]:
                         courses[key] = val
+                    pending_key = None
+                    matched = True
+                    break
+                # Standalone label line (e.g., "Primo:" followed by dish on next line)
+                if re.match(
+                    rf"^(?:{re.escape(label)})\s*[:\-–]?$",
+                    line,
+                    flags=re.IGNORECASE,
+                ):
+                    pending_key = key
                     matched = True
                     break
             if matched:
                 break
         if not matched:
-            unlabeled.append(line)
+            if pending_key is not None and not courses[pending_key]:
+                courses[pending_key] = line
+                pending_key = None
+            else:
+                pending_key = None
+                unlabeled.append(line)
 
     if not _has_any_course(courses) and unlabeled:
         # Positional fallback: Primo, Secondo, Contorno, Frutta
@@ -329,6 +348,209 @@ def parse_milanoristorazione_json(
     return weekly
 
 
+_FULL_WEEKDAY_PATTERN = re.compile(
+    r"^(luned[ìi]|marted[ìi]|mercoled[ìi]|gioved[ìi]|venerd[ìi]|sabato|domenica|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b(.*)$",
+    flags=re.IGNORECASE,
+)
+
+_ABBR_WEEKDAY_PATTERN = re.compile(
+    r"^(lun|mar|mer|gio|ven|sab|dom)\s*(?:[:\-–.]|\b\s+\d)(.*)$",
+    flags=re.IGNORECASE,
+)
+
+
+def _detect_weekday_header(line: str) -> tuple[int | None, str]:
+    """Detect if a text line starts with a weekday name; return (weekday_idx, remainder)."""
+    cleaned = _clean_text(line)
+    if not cleaned:
+        return None, ""
+    m = _FULL_WEEKDAY_PATTERN.match(cleaned)
+    if m:
+        wd = ITALIAN_WEEKDAY_ALIASES.get(m.group(1).lower())
+        remainder = m.group(2).lstrip(" :–-.,\t")
+        return wd, remainder
+    m_abbr = _ABBR_WEEKDAY_PATTERN.match(cleaned)
+    if m_abbr:
+        wd = ITALIAN_WEEKDAY_ALIASES.get(m_abbr.group(1).lower())
+        remainder = m_abbr.group(2).lstrip(" :–-.,\t")
+        return wd, remainder
+    return None, ""
+
+
+def _split_inline_course_segments(text: str) -> list[str]:
+    """Split inline multi-course lines (e.g. 'Primo: X | Secondo: Y') into lines."""
+    # Split on pipes/semicolons or before inline course labels
+    parts = re.split(r"\s*[|;]\s*|\s{2,}", text)
+    out: list[str] = []
+    label_words = "|".join(
+        re.escape(lbl)
+        for labels in _COURSE_LABELS.values()
+        for lbl in labels
+    )
+    inline_re = re.compile(
+        rf"(?=(?:^|\s)(?:{label_words})\s*[:\-–])",
+        flags=re.IGNORECASE,
+    )
+    for part in parts:
+        subparts = [p.strip() for p in inline_re.split(part) if p.strip()]
+        out.extend(subparts)
+    return out
+
+
+def _parse_menu_lines(lines: list[str]) -> dict[str, dict[str, str]]:
+    """Parse plain-text lines into a weekday-keyed menu dict."""
+    weekly: dict[str, dict[str, str]] = {}
+    current_wd: int | None = None
+    current_lines: list[str] = []
+
+    def _flush() -> None:
+        if current_wd is not None and current_lines:
+            courses = _extract_courses_from_lines(current_lines)
+            if _has_any_course(courses):
+                weekly[str(current_wd)] = courses
+
+    for raw_line in lines:
+        line = _clean_text(raw_line)
+        if not line:
+            continue
+        wd, remainder = _detect_weekday_header(line)
+        if wd is not None:
+            _flush()
+            current_wd = wd
+            current_lines = []
+            # Strip leading date like "12/05/2026" or "12 maggio" if present
+            remainder = re.sub(
+                r"^\d{1,2}(?:[/\-]\d{1,2}(?:[/\-]\d{2,4})?|\s+[a-zàèéìòù]+)?\s*[:\-–]?\s*",
+                "",
+                remainder,
+                flags=re.IGNORECASE,
+            ).strip()
+            if remainder:
+                current_lines.extend(_split_inline_course_segments(remainder))
+        elif current_wd is not None:
+            current_lines.extend(_split_inline_course_segments(line))
+
+    _flush()
+    return weekly
+
+
+def _parse_menu_text(
+    text: str,
+    school_query: str = DEFAULT_SCHOOL_QUERY,
+) -> dict[str, dict[str, str]]:
+    """Parse extracted PDF/OCR text into a weekday-keyed menu mapping."""
+    if not text or not text.strip():
+        return {}
+
+    raw_lines = text.splitlines()
+    query_lower = _clean_text(school_query).lower()
+    if query_lower and query_lower in text.lower():
+        # Try parsing from the matching school section first if present
+        for idx, line in enumerate(raw_lines):
+            if query_lower in line.lower():
+                section_weekly = _parse_menu_lines(raw_lines[idx:])
+                if section_weekly:
+                    return section_weekly
+                break
+
+    return _parse_menu_lines(raw_lines)
+
+
+def _extract_pdf_text_pypdf(pdf_bytes: bytes) -> str:
+    """Extract selectable text from PDF bytes using pypdf."""
+    try:
+        import pypdf
+    except ImportError:
+        logger.debug("pypdf is not installed; skipping fast PDF text extraction.")
+        return ""
+
+    try:
+        reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+        chunks = [page.extract_text() or "" for page in reader.pages]
+        return "\n".join(chunks)
+    except Exception as exc:
+        logger.warning("pypdf text extraction failed: %s", exc)
+        return ""
+
+
+def _extract_pdf_text_ocr(pdf_bytes: bytes) -> str:
+    """Render PDF pages with pypdfium2 and run OCR via pytesseract."""
+    try:
+        import pypdfium2 as pdfium
+        import pytesseract
+    except ImportError as exc:
+        logger.warning("OCR dependencies unavailable (%s); cannot OCR PDF.", exc)
+        return ""
+
+    ocr_chunks: list[str] = []
+    pdf_doc = None
+    try:
+        pdf_doc = pdfium.PdfDocument(pdf_bytes)
+        for page_idx, page in enumerate(pdf_doc):
+            try:
+                bitmap = page.render(scale=2.0)
+                pil_image = bitmap.to_pil()
+                try:
+                    page_text = pytesseract.image_to_string(pil_image, lang="ita")
+                except Exception:
+                    page_text = pytesseract.image_to_string(pil_image)
+                if page_text and page_text.strip():
+                    ocr_chunks.append(page_text)
+            except Exception as page_exc:
+                logger.warning("OCR failed on PDF page %d: %s", page_idx + 1, page_exc)
+    except Exception as exc:
+        logger.warning("pypdfium2 failed to render PDF for OCR: %s", exc)
+    finally:
+        if pdf_doc is not None:
+            try:
+                pdf_doc.close()
+            except Exception:
+                pass
+
+    return "\n".join(ocr_chunks)
+
+
+def parse_menu_pdf(
+    pdf_bytes_or_path: bytes | bytearray | str | Path,
+    school_query: str = DEFAULT_SCHOOL_QUERY,
+) -> dict[str, dict[str, str]]:
+    """Parse a Milano Ristorazione menu PDF (selectable text with OCR fallback).
+
+    1. Tries fast text extraction via ``pypdf``.
+    2. If text is empty/insufficient, renders pages with ``pypdfium2`` and runs
+       ``pytesseract`` OCR (``lang="ita"`` with fallback to default language).
+    """
+    if isinstance(pdf_bytes_or_path, (bytes, bytearray)):
+        pdf_bytes = bytes(pdf_bytes_or_path)
+    else:
+        pdf_path = Path(pdf_bytes_or_path)
+        if not pdf_path.exists() or not pdf_path.is_file():
+            return {}
+        try:
+            pdf_bytes = pdf_path.read_bytes()
+        except Exception as exc:
+            logger.warning("Failed to read PDF file %s: %s", pdf_path, exc)
+            return {}
+
+    if not pdf_bytes:
+        return {}
+
+    # 1. Fast text extraction via pypdf
+    extracted_text = _extract_pdf_text_pypdf(pdf_bytes)
+    if len(_clean_text(extracted_text)) >= 30:
+        weekly = _parse_menu_text(extracted_text, school_query=school_query)
+        if weekly:
+            return weekly
+
+    # 2. OCR fallback via pypdfium2 + pytesseract
+    ocr_text = _extract_pdf_text_ocr(pdf_bytes)
+    if ocr_text.strip():
+        return _parse_menu_text(ocr_text, school_query=school_query)
+
+    return {}
+
+
 def _select_day_menu(
     weekly: dict[str, dict[str, str]],
     target_date: date,
@@ -468,6 +690,129 @@ def fetch_milanoristorazione_menu(
     return {"school": school_name, "weekly": {}, "today": "", "tomorrow": "", "source": "none"}
 
 
+def fetch_pdf_menu(
+    config: dict[str, Any] | None = None,
+    state_manager: StateManager | None = None,
+    now: datetime | None = None,
+    timeout: int = 20,
+) -> dict[str, Any]:
+    """Download/read Milano Ristorazione PDF menu, parse (text + OCR), and cache it.
+
+    Caches parsed results in ``StateManager`` under ``cache["school_menu_pdf"]``.
+    """
+    cfg = config if config is not None else load_config()
+    sm = state_manager if state_manager is not None else StateManager()
+
+    mr_cfg = (
+        cfg.get("milanoristorazione", {})
+        if isinstance(cfg.get("milanoristorazione"), dict)
+        else {}
+    )
+    if mr_cfg.get("enabled", True) is False:
+        return {"today": "", "tomorrow": "", "source": "disabled"}
+
+    if now is None:
+        tz_name = str(cfg.get("timezone") or "Europe/Rome")
+        try:
+            now = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            now = datetime.now()
+
+    today_date = now.date()
+    tomorrow_date = today_date + timedelta(days=1)
+
+    school_name = str(mr_cfg.get("school_name") or DEFAULT_SCHOOL_NAME)
+    school_query = str(mr_cfg.get("school_query") or DEFAULT_SCHOOL_QUERY)
+    pdf_url = str(mr_cfg.get("pdf_url") or "").strip()
+    pdf_path_str = str(mr_cfg.get("pdf_path") or "").strip()
+    ttl = int(mr_cfg.get("cache_ttl_seconds") or DEFAULT_CACHE_TTL_SECONDS)
+
+    # 1. Fresh PDF cache hit
+    fresh_cached = sm.get_cache(PDF_CACHE_KEY, max_age_seconds=ttl)
+    if isinstance(fresh_cached, dict) and isinstance(fresh_cached.get("weekly"), dict):
+        weekly = fresh_cached["weekly"]
+        if weekly:
+            return {
+                "school": fresh_cached.get("school", school_name),
+                "weekly": weekly,
+                "today": _select_day_menu(weekly, today_date, is_today=True),
+                "tomorrow": _select_day_menu(weekly, tomorrow_date, is_today=False),
+                "source": "pdf_cache",
+            }
+
+    headers = {
+        "User-Agent": "smart-epaper-calendar/1.0 (+https://github.com/smart-epaper-calendar)",
+        "Accept": "application/pdf,*/*;q=0.8",
+    }
+
+    # 2. Download from pdf_url if configured
+    if pdf_url:
+        try:
+            resp = requests.get(pdf_url, timeout=timeout, headers=headers)
+            resp.raise_for_status()
+            weekly = parse_menu_pdf(resp.content, school_query=school_query)
+            if weekly:
+                sm.set_cache(
+                    PDF_CACHE_KEY,
+                    {
+                        "school": school_name,
+                        "pdf_url": pdf_url,
+                        "weekly": weekly,
+                    },
+                )
+                return {
+                    "school": school_name,
+                    "weekly": weekly,
+                    "today": _select_day_menu(weekly, today_date, is_today=True),
+                    "tomorrow": _select_day_menu(weekly, tomorrow_date, is_today=False),
+                    "source": "pdf_url",
+                }
+            logger.warning("PDF downloaded from %s yielded no parseable menu.", pdf_url)
+        except Exception as exc:
+            logger.warning("Failed to download/parse menu PDF (%s): %s", pdf_url, exc)
+
+    # 3. Read local pdf_path if configured and present
+    if pdf_path_str:
+        pdf_file = Path(pdf_path_str)
+        if not pdf_file.is_absolute():
+            pdf_file = PROJECT_ROOT / pdf_file
+        if pdf_file.exists() and pdf_file.is_file():
+            weekly = parse_menu_pdf(pdf_file, school_query=school_query)
+            if weekly:
+                sm.set_cache(
+                    PDF_CACHE_KEY,
+                    {
+                        "school": school_name,
+                        "pdf_path": str(pdf_file),
+                        "weekly": weekly,
+                    },
+                )
+                return {
+                    "school": school_name,
+                    "weekly": weekly,
+                    "today": _select_day_menu(weekly, today_date, is_today=True),
+                    "tomorrow": _select_day_menu(weekly, tomorrow_date, is_today=False),
+                    "source": "pdf_path",
+                }
+            logger.warning("Local PDF %s yielded no parseable menu.", pdf_file)
+
+    # 4. Stale PDF cache fallback
+    stale_cached = sm.get_cache(PDF_CACHE_KEY)
+    if isinstance(stale_cached, dict) and isinstance(stale_cached.get("weekly"), dict):
+        weekly = stale_cached["weekly"]
+        if weekly:
+            logger.info("Using stale cached school PDF menu.")
+            return {
+                "school": stale_cached.get("school", school_name),
+                "weekly": weekly,
+                "today": _select_day_menu(weekly, today_date, is_today=True),
+                "tomorrow": _select_day_menu(weekly, tomorrow_date, is_today=False),
+                "source": "pdf_stale_cache",
+            }
+
+    return {"school": school_name, "weekly": {}, "today": "", "tomorrow": "", "source": "none"}
+
+
 def resolve_school_menu(
     state_meals: dict[str, Any] | None,
     cfg: dict[str, Any],
@@ -478,8 +823,9 @@ def resolve_school_menu(
 
     Resolution order:
       1. Non-empty manual override in ``state.json["school_meals"]`` (Web UI).
-      2. Live or cached menu from ``milanoristorazione.it`` (Gattamelata).
-      3. Static fallback in ``config.yaml["school_menu"]["week_1"]``.
+      2. Live or cached menu from ``milanoristorazione.it`` (HTML/JSON).
+      3. PDF download or local PDF file with text/OCR extraction (``pdf_url`` / ``pdf_path``).
+      4. Static fallback in ``config.yaml["school_menu"]["week_1"]``.
     """
     meals = state_meals if isinstance(state_meals, dict) else {}
     today_val: Any = str(meals.get("today", "") or "").strip()
@@ -497,6 +843,16 @@ def resolve_school_menu(
     mr_tomorrow = mr_result.get("tomorrow", "")
     if _has_any_course(mr_today) or _has_any_course(mr_tomorrow) or mr_today or mr_tomorrow:
         return {"today": mr_today, "tomorrow": mr_tomorrow}
+
+    pdf_result = fetch_pdf_menu(
+        config=cfg,
+        state_manager=state_manager,
+        now=now,
+    )
+    pdf_today = pdf_result.get("today", "")
+    pdf_tomorrow = pdf_result.get("tomorrow", "")
+    if _has_any_course(pdf_today) or _has_any_course(pdf_tomorrow) or pdf_today or pdf_tomorrow:
+        return {"today": pdf_today, "tomorrow": pdf_tomorrow}
 
     # Graceful fallback to config.yaml static rotating/weekly school_menu
     menu_cfg = cfg.get("school_menu", {})
