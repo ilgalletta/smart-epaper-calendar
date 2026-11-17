@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets & Local Config
+config.yaml
+*.env
+
+# Generated Previews & Logs
+output/
+*.log
+.DS_Store

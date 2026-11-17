@@ -1,0 +1,22 @@
+# Calendar & Timezone
+icalendar
+recurring-ical-events
+pytz
+
+# Networking & Feeds
+requests
+feedparser
+
+# Image Rendering (3-Color E-Paper)
+Pillow
+
+# LAN Web UI & Configuration
+fastapi
+uvicorn
+jinja2
+python-multipart
+itsdangerous
+pyyaml
+
+# Telegram Integration
+python-telegram-bot

@@ -1,0 +1,61 @@
+{
+  "grocery_list": [],
+  "fixed_activities": {
+    "Monday": [],
+    "Tuesday": [],
+    "Wednesday": [],
+    "Thursday": [],
+    "Friday": [],
+    "Saturday": [],
+    "Sunday": []
+  },
+  "school_meals": {
+    "today": "",
+    "tomorrow": "",
+    "updated_at": null
+  },
+  "cache": {
+    "weather": {
+      "cached_at": "2026-11-17T17:08:19.433492+00:00",
+      "data": {
+        "location": "Home",
+        "latitude": 45.4642,
+        "longitude": 9.19,
+        "current": {
+          "temperature": 8.0,
+          "apparent_temperature": 6.3,
+          "humidity": 92,
+          "wind_speed": 6.1,
+          "weather_code": 3,
+          "description": "Overcast",
+          "icon": "cloud"
+        },
+        "today": {
+          "date": "2026-11-17",
+          "weather_code": 61,
+          "description": "Slight rain",
+          "icon": "rain",
+          "temp_max": 8.7,
+          "temp_min": 5.1,
+          "precip_prob_max": 20,
+          "sunrise": "2026-11-17T07:24",
+          "sunset": "2026-11-17T16:51"
+        },
+        "tomorrow": {
+          "date": "2026-11-18",
+          "weather_code": 45,
+          "description": "Fog",
+          "icon": "fog",
+          "temp_max": 13.9,
+          "temp_min": 4.2,
+          "precip_prob_max": 0,
+          "sunrise": "2026-11-18T07:26",
+          "sunset": "2026-11-18T16:50"
+        }
+      }
+    }
+  },
+  "telegram": {
+    "last_update_id": 0
+  }
+}
